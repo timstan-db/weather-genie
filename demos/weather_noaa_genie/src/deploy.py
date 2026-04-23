@@ -10,13 +10,17 @@
 # MAGIC 2. Create or update the SDP pipeline (reads from `s3://noaa-ghcn-pds`)
 # MAGIC 3. Run the pipeline and wait for completion (~10–20 min on first run)
 # MAGIC 4. Apply table and column comments plus UC tags
-# MAGIC 5. Create or update the Genie Space
+# MAGIC 5. Resolve or provision a SQL warehouse for the Genie Space
+# MAGIC 6. Create or update the Genie Space
 # MAGIC
 # MAGIC **Prerequisites:**
 # MAGIC - The full `weather-genie` repo imported into your workspace (the
 # MAGIC   pipeline's source file must be at
 # MAGIC   `<repo_root>/sources/weather_noaa/src/raw_weather_data.py`).
-# MAGIC - A running SQL warehouse ID (set via the `warehouse_id` widget).
+# MAGIC - Optionally: a specific SQL warehouse ID via the `warehouse_id`
+# MAGIC   widget. If left blank, the notebook auto-resolves one — picks the
+# MAGIC   best running warehouse, or provisions a small serverless warehouse
+# MAGIC   sized for Free Edition.
 
 # COMMAND ----------
 
@@ -37,17 +41,18 @@ def _check_id(value: str, label: str) -> str:
 
 catalog = _check_id(dbutils.widgets.get("catalog").strip(), "catalog")
 schema = _check_id(dbutils.widgets.get("schema").strip(), "schema")
-warehouse_id = _check_id(dbutils.widgets.get("warehouse_id").strip(), "warehouse_id")
+warehouse_override = dbutils.widgets.get("warehouse_id").strip()
 
 PIPELINE_NAME = "weather_noaa_raw"
 GENIE_DISPLAY_NAME = "NOAA Weather Explorer"
+GENIE_WAREHOUSE_NAME = "weather-genie-warehouse"
 AREA = "sources"
 DIR_NAME = "weather_noaa"
 TABLES = ["countries", "states", "stations", "weather"]
 
 print(f"Catalog:      {catalog}")
 print(f"Schema:       {schema}")
-print(f"Warehouse ID: {warehouse_id}")
+print(f"Warehouse ID: {warehouse_override or '(auto-resolve)'}")
 
 # COMMAND ----------
 
@@ -324,7 +329,71 @@ print(f"Tags applied: {tag_ok}/{len(TABLE_COMMENTS)}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. Create or update the Genie Space
+# MAGIC ## 5. Resolve a SQL warehouse for the Genie Space
+# MAGIC
+# MAGIC If `warehouse_id` was set, use it. Otherwise pick the best existing
+# MAGIC warehouse (running > starting > stopped, smaller size preferred), or
+# MAGIC provision a 2X-Small serverless PRO warehouse (Free Edition-sized).
+
+# COMMAND ----------
+
+
+def _resolve_warehouse() -> str:
+    if warehouse_override:
+        _check_id(warehouse_override, "warehouse_id")
+        print(f"Using warehouse override: {warehouse_override}")
+        return warehouse_override
+
+    resp = requests.get(f"{host}/api/2.0/sql/warehouses", headers=headers, timeout=30)
+    resp.raise_for_status()
+    warehouses = resp.json().get("warehouses", []) or []
+
+    _state_rank = {"RUNNING": 0, "STARTING": 1}
+    _size_rank = {"2X-Small": 0, "X-Small": 1, "Small": 2, "Medium": 3, "Large": 4}
+
+    def _rank(wh: dict) -> tuple[int, int]:
+        return (
+            _state_rank.get(wh.get("state"), 9),
+            _size_rank.get(wh.get("cluster_size"), 9),
+        )
+
+    if warehouses:
+        best = sorted(warehouses, key=_rank)[0]
+        wh_id = best["id"]
+        print(
+            f"Using existing warehouse: {best.get('name')} "
+            f"(id={wh_id}, size={best.get('cluster_size')}, state={best.get('state')})"
+        )
+        return wh_id
+
+    # None available — provision one sized for Free Edition
+    payload = {
+        "name": GENIE_WAREHOUSE_NAME,
+        "cluster_size": "2X-Small",
+        "warehouse_type": "PRO",
+        "enable_serverless_compute": True,
+        "auto_stop_mins": 10,
+        "min_num_clusters": 1,
+        "max_num_clusters": 1,
+    }
+    create_resp = requests.post(
+        f"{host}/api/2.0/sql/warehouses", headers=headers, json=payload, timeout=60
+    )
+    if not create_resp.ok:
+        raise RuntimeError(
+            f"Warehouse create failed ({create_resp.status_code}): {create_resp.text[:500]}"
+        )
+    wh_id = create_resp.json()["id"]
+    print(f"Provisioned new warehouse: {GENIE_WAREHOUSE_NAME} (id={wh_id}, 2X-Small serverless)")
+    return wh_id
+
+
+warehouse_id = _resolve_warehouse()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6. Create or update the Genie Space
 
 # COMMAND ----------
 

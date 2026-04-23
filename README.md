@@ -17,18 +17,19 @@ This repo is a **generated artifact** of a private monorepo. It contains:
 
 ## Quick start (recommended — works on Free Edition)
 
-You need a Databricks workspace with a Unity Catalog catalog you can write to,
-and a running SQL warehouse.
+You need a Databricks workspace with a Unity Catalog catalog you can write to.
+No SQL warehouse required up front — the notebook will pick one if you have it,
+or provision a small serverless warehouse if you don't.
 
 1. **Get the repo into your workspace.**
    In Databricks: **Workspace** → **Create** → **Git folder**, paste
    `https://github.com/timstan-db/weather-genie`, and import.
 2. **Open `demos/weather_noaa_genie/src/deploy.py`** in the workspace.
-3. **Set the widgets at the top of the notebook:**
+3. **Set the widgets at the top of the notebook (defaults are fine for Free Edition):**
    - `catalog` — the UC catalog to write into (default: `workspace`).
    - `schema` — the raw schema (default: `raw_weather_noaa`).
-   - `warehouse_id` — your SQL warehouse ID (SQL Warehouses → pick one → *Endpoint
-     ID* in the connection details).
+   - `warehouse_id` — **leave blank** to auto-resolve, or paste a specific
+     warehouse ID to pin one.
 4. **Run All.**
 
 On first run, the SDP pipeline backfills the full GHCNd daily dataset — expect
@@ -50,7 +51,10 @@ When it finishes, the notebook prints the Genie Space URL. Open it and try:
 3. **Run the pipeline and wait for completion.**
 4. **Apply table and column comments** plus UC tags (`managed_by`, `area`,
    `dir_name`) to all four tables.
-5. **Create or update the Genie Space** *NOAA Weather Explorer* over the
+5. **Resolve a SQL warehouse** — reuses the best existing warehouse if any,
+   otherwise provisions `weather-genie-warehouse` (2X-Small serverless PRO,
+   10-min auto-stop — sized to fit Free Edition).
+6. **Create or update the Genie Space** *NOAA Weather Explorer* over the
    raw tables, with sample questions and modeling instructions.
 
 The Genie instructions handle common gotchas: temperature-trend questions
