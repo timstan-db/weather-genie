@@ -1,0 +1,27 @@
+name: weather_noaa_genie
+title: "NOAA Weather Explorer — Genie Space"
+description: >
+  AI/BI Genie space over the NOAA Global Historical Climatology Network
+  daily (GHCNd) dataset. Natural-language exploration of ~120,000 weather
+  stations across 200+ countries with records dating to the 1700s.
+  Depends on the weather_noaa source bundle to land the raw tables.
+
+public_repo: "timstan-db/weather-genie"
+
+data:
+  path_type: "tables"
+  source_dependencies:
+    - weather_noaa
+  curated_dependencies: []
+
+schemas:
+  demo: ""
+  app: ""
+
+features:
+  - serverless
+  - genie
+
+smoke_test:
+  entry_point: "src/01_create_genie_space.py"
+  timeout_minutes: 10

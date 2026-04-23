@@ -1,0 +1,93 @@
+# Source ingestion bundle: NOAA Global Historical Climatology Network daily (GHCNd).
+# Creates schema raw_weather_noaa with tables:
+#   countries, states, stations, weather
+#
+# The SDP pipeline reads directly from the public noaa-ghcn-pds S3 bucket.
+# No download step is required.
+
+bundle:
+  name: source_weather_noaa
+
+include:
+  - ../../shared/dab_includes/compute_defaults.yml
+
+variables:
+  catalog:
+    description: "Unity Catalog name"
+    # Set for your workspace: BUNDLE_VAR_catalog=<name> (or --var)
+    default: ""
+
+  schema:
+    description: "Target schema (raw_<source> convention)"
+    default: raw_weather_noaa
+
+workspace:
+  root_path: ~/sources/${bundle.name}
+
+resources:
+  schemas:
+    raw_schema:
+      name: ${var.schema}
+      catalog_name: ${var.catalog}
+      properties:
+        managed_by: databricks-demos
+        area: sources
+        dir_name: weather_noaa
+
+  pipelines:
+    raw_tables:
+      name: ${bundle.name}_raw
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      channel: ${var.sdp_channel}
+      serverless: true
+      usage_policy_id: ${var.serverless_usage_policy_id}
+      tags:
+        managed_by: databricks-demos
+        area: sources
+        dir_name: weather_noaa
+      libraries:
+        - file:
+            path: src/raw_weather_data.py
+
+  jobs:
+    ingest:
+      name: ${bundle.name}_ingest
+      usage_policy_id: ${var.serverless_usage_policy_id}
+      environments:
+        - environment_key: default
+          spec:
+            client: ${var.serverless_version}
+      tasks:
+        - task_key: to_raw
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.raw_tables.id}
+
+        - task_key: table_comments
+          depends_on:
+            - task_key: to_raw
+          environment_key: default
+          notebook_task:
+            notebook_path: src/03_table_comments.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              area: sources
+              dir_name: weather_noaa
+
+      tags:
+        managed_by: databricks-demos
+        area: sources
+        dir_name: weather_noaa
+
+targets:
+  dev:
+    mode: development
+    default: true
+    presets:
+      tags:
+        managed_by: databricks-demos
+        area: sources
+        dir_name: weather_noaa
+  prod:
+    mode: production

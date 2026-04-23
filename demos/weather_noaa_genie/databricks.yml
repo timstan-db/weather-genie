@@ -1,0 +1,64 @@
+bundle:
+  name: demo_weather_noaa_genie
+
+include:
+  - ../../shared/dab_includes/compute_defaults.yml
+
+variables:
+  catalog:
+    description: "Unity Catalog name"
+    # Set for your workspace: BUNDLE_VAR_catalog=<name> (or --var)
+    default: ""
+
+  raw_schema:
+    description: "Raw schema produced by the weather_noaa source bundle"
+    default: raw_weather_noaa
+
+  default_warehouse_id:
+    description: "SQL warehouse backing the Genie space"
+    # Set for your workspace: BUNDLE_VAR_default_warehouse_id=<id> (or --var)
+    default: ""
+
+workspace:
+  root_path: ~/demos/${bundle.name}
+
+resources:
+  jobs:
+    setup:
+      name: ${bundle.name}_setup
+      usage_policy_id: ${var.serverless_usage_policy_id}
+      environments:
+        - environment_key: default
+          spec:
+            client: ${var.serverless_version}
+      tasks:
+        - task_key: create_genie_space
+          environment_key: default
+          notebook_task:
+            notebook_path: src/01_create_genie_space.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.raw_schema}
+              warehouse_id: ${var.default_warehouse_id}
+              workspace_folder: ${workspace.root_path}
+      tags:
+        managed_by: databricks-demos
+        area: demos
+        dir_name: weather_noaa_genie
+
+targets:
+  dev:
+    mode: development
+    default: true
+    presets:
+      tags:
+        managed_by: databricks-demos
+        area: demos
+        dir_name: weather_noaa_genie
+  prod:
+    mode: production
+    presets:
+      tags:
+        managed_by: databricks-demos
+        area: demos
+        dir_name: weather_noaa_genie
