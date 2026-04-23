@@ -5,35 +5,71 @@ daily (GHCNd) dataset on Databricks. ~120,000 weather stations across 200+
 countries, records back to the 1700s — all queryable in plain English through
 an AI/BI Genie Space.
 
-This repo is a **generated artifact** of a private monorepo. It contains two
-self-contained [Databricks Asset Bundles](https://docs.databricks.com/aws/en/dev-tools/bundles/):
+This repo is a **generated artifact** of a private monorepo. It contains:
 
-- `sources/weather_noaa/` — SDP pipeline that ingests GHCNd directly from the
-  public `s3://noaa-ghcn-pds/` bucket into four Delta tables (`countries`,
-  `states`, `stations`, `weather`), with column comments and UC tags.
-- `demos/weather_noaa_genie/` — creates (or updates) a Genie Space over those
-  tables with curated sample questions and modeling instructions.
+- `demos/weather_noaa_genie/src/deploy.py` — an **orchestrator notebook** that
+  deploys everything end-to-end from a single Run All. Works on Databricks
+  Free Edition.
+- `sources/weather_noaa/` — an optional [Databricks Asset Bundle](https://docs.databricks.com/aws/en/dev-tools/bundles/)
+  for the ingestion side (SDP pipeline + schema + UC tags), for folks who
+  prefer Infrastructure-as-Code over notebook-driven deploys.
+- `demos/weather_noaa_genie/` — a matching bundle for the Genie Space side.
 
-## Prerequisites
+## Quick start (recommended — works on Free Edition)
 
-- A Databricks workspace on AWS, Azure, or GCP.
-- [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install) v0.220+ configured (`databricks auth login`).
-- A Unity Catalog catalog you can write to.
-- A running SQL warehouse (serverless or classic).
+You need a Databricks workspace with a Unity Catalog catalog you can write to,
+and a running SQL warehouse.
 
-## Deploy
+1. **Get the repo into your workspace.**
+   In Databricks: **Workspace** → **Create** → **Git folder**, paste
+   `https://github.com/timstan-db/weather-genie`, and import.
+2. **Open `demos/weather_noaa_genie/src/deploy.py`** in the workspace.
+3. **Set the widgets at the top of the notebook:**
+   - `catalog` — the UC catalog to write into (default: `workspace`).
+   - `schema` — the raw schema (default: `raw_weather_noaa`).
+   - `warehouse_id` — your SQL warehouse ID (SQL Warehouses → pick one → *Endpoint
+     ID* in the connection details).
+4. **Run All.**
 
-Deploy the source bundle first (it creates the schema and lands the data), then
-the demo bundle (it creates the Genie Space).
+On first run, the SDP pipeline backfills the full GHCNd daily dataset — expect
+~10–20 minutes. Subsequent runs are incremental.
+
+When it finishes, the notebook prints the Genie Space URL. Open it and try:
+
+> How many weather stations are there by country?
+>
+> How has the Colorado snowpack in January above 10,000 feet changed over the years?
+>
+> Where should I go on vacation in February if I'm looking for daily highs between 65–80°F?
+
+## What the notebook does
+
+1. **Create the target schema** (`<catalog>.raw_weather_noaa`).
+2. **Create or update the SDP pipeline** that reads directly from the public
+   `s3://noaa-ghcn-pds/` bucket. Source: `sources/weather_noaa/src/raw_weather_data.py`.
+3. **Run the pipeline and wait for completion.**
+4. **Apply table and column comments** plus UC tags (`managed_by`, `area`,
+   `dir_name`) to all four tables.
+5. **Create or update the Genie Space** *NOAA Weather Explorer* over the
+   raw tables, with sample questions and modeling instructions.
+
+The Genie instructions handle common gotchas: temperature-trend questions
+default to TMAX, data-coverage gaps are accounted for, US-states questions
+filter out Canadian provinces, and travel-recommendation questions get real
+station-based answers instead of out-of-scope refusals.
+
+## Alternative — deploy via Databricks Asset Bundles
+
+For paid workspaces where the Jobs API is available, you can deploy the two
+bundles directly:
 
 ```bash
 # 1. Land the NOAA data
 cd sources/weather_noaa
-databricks bundle deploy \
-  --var="catalog=YOUR_CATALOG"
+databricks bundle deploy --var="catalog=YOUR_CATALOG"
 databricks bundle run ingest
 
-# 2. Create the Genie Space over the raw tables
+# 2. Create the Genie Space
 cd ../../demos/weather_noaa_genie
 databricks bundle deploy \
   --var="catalog=YOUR_CATALOG" \
@@ -41,12 +77,13 @@ databricks bundle deploy \
 databricks bundle run setup
 ```
 
-The source ingest takes ~10–20 minutes on first run (it backfills the GHCNd
-daily file — ~500M rows). Subsequent runs are incremental via Auto Loader.
+**Not supported on Databricks Free Edition** — Free Edition's Jobs API is
+gated, which blocks bundle deploys that include a `jobs:` resource. Use the
+orchestrator notebook above instead.
 
-### Setting defaults once
+### Setting variable defaults
 
-If you don't want to pass `--var` every time, export them in your shell:
+Instead of passing `--var` every time, export shell vars:
 
 ```bash
 export BUNDLE_VAR_catalog=YOUR_CATALOG
@@ -55,7 +92,7 @@ export BUNDLE_VAR_default_warehouse_id=YOUR_WAREHOUSE_ID
 
 ## What you get
 
-**Unity Catalog schema** `YOUR_CATALOG.raw_weather_noaa`:
+**Unity Catalog schema** `<your_catalog>.raw_weather_noaa`:
 
 | Table | Rows | Description |
 |---|---|---|
@@ -64,16 +101,7 @@ export BUNDLE_VAR_default_warehouse_id=YOUR_WAREHOUSE_ID
 | `stations` | ~120k | Station dimension with lat/lon/elevation/country |
 | `weather` | ~3B | Daily observations (TMAX, TMIN, PRCP, SNOW, SNWD…) |
 
-**A Genie Space** named *NOAA Weather Explorer* with sample questions like:
-
-- *How many weather stations are there by country?*
-- *How has the Colorado snowpack in January above 10,000 feet changed over the years?*
-- *Where should I go on vacation in February if I'm looking for daily highs between 65–80°F?*
-
-The Genie instructions handle common gotchas: temperature-trend questions
-default to TMAX, data-coverage gaps are accounted for, US-states questions
-filter out Canadian provinces, and travel-recommendation questions get real
-station-based answers instead of out-of-scope refusals.
+**A Genie Space** named *NOAA Weather Explorer* over those four tables.
 
 ## Data source
 
@@ -83,11 +111,13 @@ No NOAA credentials required.
 
 ## Notes
 
-- **Serverless only.** Both bundles use Databricks serverless compute.
+- **Serverless only.** Both the pipeline and the Genie warehouse use
+  Databricks serverless compute.
 - **Don't edit this repo directly** — it's generated from a private monorepo.
 - Genie Spaces aren't yet a native Databricks Asset Bundle resource (see
-  [databricks/cli#4191](https://github.com/databricks/cli/pull/4191)), so the
-  demo bundle manages the Space via the REST API from a notebook task.
+  [databricks/cli#4191](https://github.com/databricks/cli/pull/4191)), so
+  creation happens via the REST API either from the orchestrator notebook or
+  a notebook task inside the demo bundle.
 
 ## License
 
