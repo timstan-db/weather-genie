@@ -1,0 +1,121 @@
+# NOAA Weather Explorer — single-bundle public layout.
+#
+# This databricks.yml is the merged, flat version that ships in the public
+# repo. It combines the source ingestion (SDP pipeline + table comments) and
+# the demo (Genie Space creation) into one bundle so consumers can deploy
+# everything with a single `databricks bundle deploy` from the repo root.
+#
+# In the monorepo the same logic is split across:
+#   - sources/weather_noaa/databricks.yml
+#   - demos/weather_noaa_genie/databricks.yml
+# Keep this file in sync with both when either changes.
+
+bundle:
+  name: weather_noaa_genie
+
+include:
+  - shared/dab_includes/compute_defaults.yml
+
+variables:
+  catalog:
+    description: "Unity Catalog the demo writes to (defaults to main)"
+    # Override with BUNDLE_VAR_catalog=<name> or --var=catalog=<name>.
+    default: main
+
+  raw_schema:
+    description: "Raw schema (raw_<source> convention)"
+    default: raw_weather_noaa
+
+  default_warehouse_id:
+    description: "SQL warehouse backing the Genie Space (auto-detected if blank)"
+    # Optional: override with BUNDLE_VAR_default_warehouse_id=<id> (or --var).
+    # If left blank, setup picks the first serverless SQL warehouse it finds.
+    default: ""
+
+workspace:
+  root_path: ~/${bundle.name}
+
+resources:
+  schemas:
+    raw_schema:
+      name: ${var.raw_schema}
+      catalog_name: ${var.catalog}
+      properties:
+        managed_by: weather_noaa_genie
+        dir_name: weather_noaa_genie
+
+  pipelines:
+    raw_tables:
+      name: ${bundle.name}_raw
+      catalog: ${var.catalog}
+      schema: ${var.raw_schema}
+      channel: ${var.sdp_channel}
+      serverless: true
+      tags:
+        managed_by: weather_noaa_genie
+        dir_name: weather_noaa_genie
+      libraries:
+        - file:
+            path: src/raw_weather_data.py
+
+  jobs:
+    ingest:
+      name: ${bundle.name}_ingest
+      environments:
+        - environment_key: default
+          spec:
+            client: ${var.serverless_version}
+      tasks:
+        - task_key: to_raw
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.raw_tables.id}
+
+        - task_key: table_comments
+          depends_on:
+            - task_key: to_raw
+          environment_key: default
+          notebook_task:
+            notebook_path: src/03_table_comments.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.raw_schema}
+              area: weather_noaa_genie
+              dir_name: weather_noaa_genie
+      tags:
+        managed_by: weather_noaa_genie
+        dir_name: weather_noaa_genie
+
+    setup:
+      name: ${bundle.name}_setup
+      environments:
+        - environment_key: default
+          spec:
+            client: ${var.serverless_version}
+      tasks:
+        - task_key: create_genie_space
+          environment_key: default
+          notebook_task:
+            notebook_path: src/01_create_genie_space.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.raw_schema}
+              warehouse_id: ${var.default_warehouse_id}
+              workspace_folder: ${workspace.root_path}
+      tags:
+        managed_by: weather_noaa_genie
+        dir_name: weather_noaa_genie
+
+targets:
+  dev:
+    mode: development
+    default: true
+    presets:
+      tags:
+        managed_by: weather_noaa_genie
+        dir_name: weather_noaa_genie
+  prod:
+    mode: production
+    presets:
+      tags:
+        managed_by: weather_noaa_genie
+        dir_name: weather_noaa_genie
